@@ -23,28 +23,48 @@ from charms.kubernetes.flagmanager import FlagManager
 from charms.templating.jinja2 import render
 
 
-def _reconfigure_docker_for_sdn():
-    ''' By default docker uses the docker0 bridge for container networking.
-    This method removes the default docker bridge, and reconfigures the
-    DOCKER_OPTS to use the flannel networking bridge '''
-
-    hookenv.status_set('maintenance', 'Reconfiguring docker network bridge')
-    host.service_stop('docker')
-    apt_install(['bridge-utils'], fatal=True)
-    # cmd = "ifconfig docker0 down"
-    # ifconfig doesn't always work. use native linux networking commands to
-    # mark the bridge as inactive.
-    cmd = ['ip', 'link', 'set', 'docker0', 'down']
-    check_call(cmd)
-
-    cmd = ['brctl', 'delbr', 'docker0']
-    check_call(cmd)
-    set_state('docker.restart')
-
-
 @hook('upgrade-charm')
 def remove_installed_state():
     remove_state('kubernetes.worker.bins.installed')
+
+
+@when('kubernetes.worker.bins.installed')
+@when_not('kube-dns.available')
+def notify_user_transient_status():
+    ''' During deployment the worker has to start kubelet without cluster dns
+    configured. If this is the first unit online in a service pool its waiting
+    to self host the dns pod, and configure itself to query the dns service
+    declared in the kube-system namespace '''
+
+    # Daemon options are managed by the FlagManager class
+    kubelet_opts = FlagManager('kubelet')
+
+    # Query the FlagManager dict for the dns option, and determine if
+    # the service is running
+    if ('--cluster-dns' not in kubelet_opts.data and
+       _systemctl_is_active('kubelet')):
+        hookenv.status_set('waiting', 'Waiting on cluster dns')
+    else:
+        hookenv.status_set('waiting',
+                           'Waiting for cluster-manager to start')
+
+
+# Handle cases where the DNS/Addons still haven't propigated
+@when('kubernetes.worker.bins.installed', 'kube-dns.available')
+def notify_user_turnup_status(kube_dns):
+    ''' Determine which state we are in and report that we are pending an
+    pods to start during the initial phase of deployment. '''
+
+    # Daemon options are managed by the FlagManager class
+    kubelet_opts = FlagManager('kubelet')
+
+    # Query the FlagManager dict for the dns option, and determine if
+    # the service is running
+    if ('--cluster-dns' in kubelet_opts.data and
+       _systemctl_is_active('kubelet')):
+        hookenv.status_set('active', 'Kubernetes worker running.')
+    else:
+        hookenv.status_set('waiting', 'Waiting on cluster dns')
 
 
 @when('docker.available')
@@ -114,7 +134,8 @@ def container_sdn_setup(sdn):
 
     with open('/etc/default/docker', 'w') as stream:
         stream.write('DOCKER_OPTS="{}"'.format(opts.to_s()))
-    _reconfigure_docker_for_sdn()
+    hookenv.status_set('maintenance', 'Reconfiguring container network bridge')
+    _reconfigure_container_runtime_for_sdn()
     set_state('sdn.configured')
 
 
@@ -258,7 +279,6 @@ def restart_unit_services():
     hookenv.log('Restarting kubelet, and kube-proxy.')
     call(['systemctl', 'restart', 'kubelet'])
     call(['systemctl', 'restart', 'kube-proxy'])
-    hookenv.status_set('active', 'Worker ready')
 
 
 def get_kube_api_server(kube_api):
@@ -279,3 +299,31 @@ def get_kube_api_server(kube_api):
     else:
         hookenv.log('Unable to get "server" not services.')
     return server
+
+
+def _reconfigure_container_runtime_for_sdn():
+    ''' By default docker uses the docker0 bridge for container networking.
+    This method removes the default docker bridge, and reconfigures the
+    DOCKER_OPTS to use the flannel networking bridge '''
+
+    host.service_stop('docker')
+    apt_install(['bridge-utils'], fatal=True)
+    # cmd = "ifconfig docker0 down"
+    # ifconfig doesn't always work. use native linux networking commands to
+    # mark the bridge as inactive.
+    cmd = ['ip', 'link', 'set', 'docker0', 'down']
+    check_call(cmd)
+
+    cmd = ['brctl', 'delbr', 'docker0']
+    check_call(cmd)
+    set_state('docker.restart')
+
+
+def _systemctl_is_active(application):
+    ''' Poll systemctl to determine if the application is running '''
+    cmd = ['systemctl', 'is-active', application]
+    try:
+        raw = check_output(cmd)
+        return b'active' in raw
+    except Exception:
+        return False
