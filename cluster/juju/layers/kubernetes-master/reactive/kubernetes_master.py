@@ -146,6 +146,7 @@ def start_master(etcd, tls):
         host.service_start(service)
     hookenv.open_port(6443)
     hookenv.status_set('active', 'Kubernetes master services ready.')
+
     set_state('kube_master_components.started')
 
 
@@ -215,7 +216,6 @@ def gather_sdn_data(sdn_plugin):
 @when('config.changed.dashboard', 'kubernetes.dashboard.available')
 def reset_states():
     remove_state('kubernetes.dashboard.available')
-    launch_kubernetes_dashboard()
 
 
 @when('kube-dns.available')
@@ -258,16 +258,34 @@ def start_kube_dns(sdn_plugin):
         hookenv.log('kube-apiserver not ready, not requesting dns deployment')
         return
 
+    # prepare data from the sdn plugin
     context = prepare_sdn_context(sdn_plugin)
     context['arch'] = arch()
+    # Prepare templates for launching the kubedns service and replication
+    # controller
     render('kubedns-rc.yaml', '/etc/kubernetes/addons/kubedns-rc.yaml',
            context)
     render('kubedns-svc.yaml', '/etc/kubernetes/addons/kubedns-svc.yaml',
            context)
-    # This should be auto-loaded by the addon manager, but it doesnt appear
-    # to do so.
+    # invoke dns launch.
     launch_dns()
-    set_state('kube-dns.available')
+    set_state('kube-dns.worker.notice')
+
+
+@when('kube-dns.worker.notice', 'cluster-dns.connected')
+@when_not('kube-dns.available')
+def ensure_dns_availability(cluster_dns):
+    ''' Once we have launched a workload on the transient worker(s) we will
+    need to continue to poll them until 'kube-dns' is in our pod output. '''
+
+    cmd = ['kubectl', 'cluster-info']
+    cluster_info = check_output(cmd)
+    if b'kube-dns' in cluster_info:
+        set_state('kube-dns.available')
+
+    # If we dont have cluster dns, send a ping to the remote unit to
+    # encourage it to converge faster
+    cluster_dns.set_seed(random.random())
 
 
 @when('loadbalancer.available', 'certificates.ca.available',
