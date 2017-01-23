@@ -1,9 +1,26 @@
 pause:
     description: |
       Cordon the unit, draining all active workloads.
+    params:
+      force:
+        type: boolean
+        default: False
+        description: Force drain/cordon to remove units with local storage.
 resume:
     description: |
       UnCordon the unit, enabling workload scheduling.
+restart:
+    description: |
+      Restart the kubernetes-worker services
+    params:
+      docker:
+        type: boolean
+        default: False
+        description: Cycle the docker daemon
+      force:
+        type: boolean
+        default: False
+        description: Skip pause/cordoning of the worker-unit during restart.
 microbot:
     description: Launch microbot containers
     params:

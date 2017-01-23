@@ -1,0 +1,48 @@
+#!/bin/bash
+
+set -e
+set -u
+set -x
+
+# Initiate a service restart without the requirement of rebooting the unit.
+# Optional parameters:
+# force: - Do not pause/cordon the unit during service restart
+# docker: - Cycle the docker daemon during the kubernetes-worker service reboot
+
+FORCE=$(action-get force)
+DOCKER=$(action-get docker)
+
+# Force restarts are kind of a bonzai thing. We're not concerned with the
+# Workloads contained therein, so forcibly recycle the services and exit 0.
+
+if [ ${FORCE} == "True" ]; then
+
+  if [ ${DOCKER} == "True" ]; then
+    systemctl "Force restarting docker service..."
+    systemctl restart docker
+  fi
+
+  juju-log "Force restarting kubernetes-worker services..."
+  systemctl restart kubelet
+  systemctl restart kube-proxy
+
+  exit 0
+fi
+
+# Non force restarts below
+
+# Pause the unit, and cordon so no additional workloads get scheduled during
+# the restart.
+juju-log "Pausing kubernetes-worker services"
+actions/pause
+
+systemctl restart kubelet
+systemctl restart kube-proxy
+
+if [ ${DOCKER} == "True" ]; then
+  systemctl "Restarting docker service during service interruption..."
+  systemctl restart docker
+fi
+
+juju-log "Resuming service"
+actions/resume

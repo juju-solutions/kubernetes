@@ -2,6 +2,18 @@
 
 set -ex
 
+FORCE_LOCAL=$(action-get force)
+
 kubectl --kubeconfig=/srv/kubernetes/config cordon $(hostname)
-kubectl --kubeconfig=/srv/kubernetes/config drain $(hostname) --force
+
+if [ ${FORCE_LOCAL} == True ]; then
+  # NOTE: This action reads FORCE from the RESTART action as well, and uses it
+  # in the appropriate context. Please ensure you evaluate both code paths before
+  # changing this behavior.
+  kubectl --kubeconfig=/srv/kubernetes/config drain $(hostname) --force --delete-local-data
+else
+  # The default FORCE will not delete local storage, and may fail, however this
+  # is the default behavior.
+  kubectl --kubeconfig=/srv/kubernetes/config drain $(hostname) --force
+fi
 status-set 'waiting' 'Kubernetes unit paused'

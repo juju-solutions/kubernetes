@@ -36,6 +36,25 @@ The kubernetes-worker charm supports the following Operational Actions:
 Pausing the workload enables administrators to both [drain](http://kubernetes.io/docs/user-guide/kubectl/kubectl_drain/) and [cordon](http://kubernetes.io/docs/user-guide/kubectl/kubectl_cordon/)
 a unit for maintenance.
 
+Parameter force:  This will force deletion of pods utilizing local storage.
+See the [attached bug](https://github.com/juju-solutions/bundle-canonical-kubernetes/issues/200)
+for details on why this paramter exists. It can be potentially destructive, so
+use with care.
+
+
+#### Restart
+
+Restart will cycle the kubernetes-worker services in the event of node degradation
+without the need for a full system restart. This can often be caused by docker
+deadlocking bugs, and resolved by simply cycling the service(s) in degradation.
+
+This will restart: `kubelet`, and `kube-proxy` services by default.
+
+Parameter docker: Include cycling the docker daemon service during the restart
+request
+
+Parameter force: Skip any attempt to pause/cordon the unit during service cycling.
+
 
 #### Resume
 
