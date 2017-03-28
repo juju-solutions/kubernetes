@@ -299,7 +299,7 @@ def start_worker(kube_api, kube_control, cni):
         set_privileged()
 
         create_config(servers[0])
-        configure_worker_services(servers, dns)
+        configure_worker_services(servers, dns, cluster_cidr)
         set_state('kubernetes-worker.config.created')
         restart_unit_services()
         update_kubelet_status()
