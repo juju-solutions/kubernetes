@@ -291,20 +291,24 @@ def start_worker(kube_api, kube_control, cni):
     dns = kube_control.get_dns()
     cluster_cidr = cni.get_config()['cidr']
 
-    if (is_state('kubernetes-worker.restart-needed') or
-            data_changed('kube-api-servers', servers) or
+    if (data_changed('kube-api-servers', servers) or
             data_changed('kube-dns', dns) or
             data_changed('cluster-cidr', cluster_cidr)):
-
-        # set --allow-privileged flag for kubelet
-        set_privileged()
 
         create_config(servers[0])
         configure_worker_services(servers, dns, cluster_cidr)
         set_state('kubernetes-worker.config.created')
-        restart_unit_services()
-        update_kubelet_status()
-        remove_state('kubernetes-worker.restart-needed')
+        set_state('kubernetes-worker.restart-needed')
+
+
+@when('kubernetes-worker.restart-needed')
+def handle_restart():
+    # set --allow-privileged flag for kubelet
+    set_privileged()
+
+    restart_unit_services()
+    update_kubelet_status()
+    remove_state('kubernetes-worker.restart-needed')
 
 
 @when('cni.connected')
