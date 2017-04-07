@@ -291,14 +291,15 @@ def start_worker(kube_api, kube_control, cni):
     dns = kube_control.get_dns()
     cluster_cidr = cni.get_config()['cidr']
 
-    if (data_changed('kube-api-servers', servers) or
+    if (is_state('kubernetes-worker.restart-needed') or
+            data_changed('kube-api-servers', servers) or
             data_changed('kube-dns', dns) or
             data_changed('cluster-cidr', cluster_cidr)):
 
         create_config(servers[0])
         configure_worker_services(servers, dns, cluster_cidr)
         set_state('kubernetes-worker.config.created')
-        set_state('kubernetes-worker.restart-needed')
+        handle_restart()
 
 
 @when('kubernetes-worker.restart-needed')
@@ -624,7 +625,7 @@ def remove_nrpe_config(nagios=None):
 
 
 def set_privileged():
-    """Update the allow-privileged flag for kube-apiserver.
+    """Update the allow-privileged flag for kubelet.
 
     """
     privileged = hookenv.config('allow-privileged')
