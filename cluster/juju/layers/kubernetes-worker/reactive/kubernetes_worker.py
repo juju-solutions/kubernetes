@@ -698,6 +698,7 @@ def enable_gpu():
 
 @when('kubernetes-worker.gpu.enabled')
 @when_not('kubernetes-worker.privileged')
+@when_not('kubernetes-worker.restart-needed')
 def disable_gpu():
     """Disable GPU usage on this node.
 
