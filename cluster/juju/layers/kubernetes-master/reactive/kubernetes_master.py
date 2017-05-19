@@ -471,6 +471,7 @@ def addons_ready():
     except CalledProcessError:
         hookenv.log('Failed to apply kube-system rbac role for addons. '
                     'Addons likely wont work.')
+        return False
 
     try:
         check_call(['cdk-addons.apply'])
