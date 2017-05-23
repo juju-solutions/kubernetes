@@ -86,8 +86,8 @@ def request_kubelet_and_proxy_credentials(kube_control):
     """ Request kubelet node authorization with a well formed kubelet user.
     This also implies that we are requesting kube-proxy auth. """
 
-    nodeuser = 'system:node:{}'.format(gethostname())
-    kube_control.set_auth_request(nodeuser)
+    nodeuser = 'e2e-'.format(gethostname())
+    kube_control.set_auth_request(nodeuser, group='system:masters')
 
 
 @when('tls_client.ca_installed', 'kubernetes-master.available',
@@ -101,15 +101,15 @@ def prepare_kubeconfig_certificates(master, kube_control):
     ca = layer_options.get('ca_certificate_path')
     creds = kube_control.get_auth_credentials()
 
-    servers = random.choice(get_kube_api_servers(master))
+    server = random.choice(get_kube_api_servers(master))
 
     # pedantry
     kubeconfig_path = '/home/ubuntu/.kube/config'
 
     # Create kubernetes configuration in the default location for ubuntu.
-    create_kubeconfig('/root/.kube/config', servers[0], ca=ca,
+    create_kubeconfig('/root/.kube/config', server, ca=ca,
                       token=creds['kubelet_token'], user='root')
-    create_kubeconfig(kubeconfig_path, servers[0], ca=ca,
+    create_kubeconfig(kubeconfig_path, server, ca=ca,
                       token=creds['kubelet_token'], user='root')
     # Set permissions on the ubuntu users kubeconfig to ensure a consistent UX
     cmd = ['chown', 'ubuntu:ubuntu', kubeconfig_path]
