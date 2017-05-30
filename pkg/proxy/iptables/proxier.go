@@ -181,11 +181,10 @@ func newServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, se
 	copy(info.loadBalancerSourceRanges, service.Spec.LoadBalancerSourceRanges)
 	copy(info.externalIPs, service.Spec.ExternalIPs)
 
-	if info.onlyNodeLocalEndpoints {
+	if apiservice.NeedsHealthCheck(service) {
 		p := apiservice.GetServiceHealthCheckNodePort(service)
 		if p == 0 {
-			glog.Errorf("Service does not contain necessary annotation %v",
-				apiservice.BetaAnnotationHealthCheckNodePort)
+			glog.Errorf("Service %q has no healthcheck nodeport", serviceName)
 		} else {
 			info.healthCheckNodePort = int(p)
 		}
@@ -302,6 +301,7 @@ type Proxier struct {
 	portMapper     portOpener
 	recorder       record.EventRecorder
 	healthChecker  healthcheck.Server
+	healthzServer  healthcheck.HealthzUpdater
 }
 
 type localPort struct {
@@ -352,10 +352,11 @@ func NewProxier(ipt utiliptables.Interface,
 	hostname string,
 	nodeIP net.IP,
 	recorder record.EventRecorder,
+	healthzServer healthcheck.HealthzUpdater,
 ) (*Proxier, error) {
 	// check valid user input
 	if minSyncPeriod > syncPeriod {
-		return nil, fmt.Errorf("min-sync (%v) must be < sync(%v)", minSyncPeriod, syncPeriod)
+		return nil, fmt.Errorf("min-sync (%v) must be <= sync(%v)", minSyncPeriod, syncPeriod)
 	}
 
 	// Set the route_localnet sysctl we need for
@@ -415,6 +416,7 @@ func NewProxier(ipt utiliptables.Interface,
 		portMapper:       &listenPortOpener{},
 		recorder:         recorder,
 		healthChecker:    healthChecker,
+		healthzServer:    healthzServer,
 	}, nil
 }
 
@@ -514,6 +516,10 @@ func (proxier *Proxier) Sync() {
 func (proxier *Proxier) SyncLoop() {
 	t := time.NewTicker(proxier.syncPeriod)
 	defer t.Stop()
+	// Update healthz timestamp at beginning in case Sync() never succeeds.
+	if proxier.healthzServer != nil {
+		proxier.healthzServer.UpdateTimestamp()
+	}
 	for {
 		<-t.C
 		glog.V(6).Infof("Periodic sync")
@@ -644,14 +650,8 @@ func updateServiceMap(
 	// computing this incrementally similarly to serviceMap.
 	hcServices = make(map[types.NamespacedName]uint16)
 	for svcPort, info := range serviceMap {
-		if info.onlyNodeLocalEndpoints {
+		if info.healthCheckNodePort != 0 {
 			hcServices[svcPort.NamespacedName] = uint16(info.healthCheckNodePort)
-		}
-	}
-	for nsn, port := range hcServices {
-		if port == 0 {
-			glog.Errorf("Service %q has no healthcheck nodeport", nsn)
-			delete(hcServices, nsn)
 		}
 	}
 
@@ -891,6 +891,7 @@ func (proxier *Proxier) syncProxyRules(reason syncReason) {
 	}
 	start := time.Now()
 	defer func() {
+		SyncProxyRulesLatency.Observe(sinceInMicroseconds(start))
 		glog.V(4).Infof("syncProxyRules(%s) took %v", reason, time.Since(start))
 	}()
 	// don't sync rules till we've received services and endpoints
@@ -1069,7 +1070,7 @@ func (proxier *Proxier) syncProxyRules(reason syncReason) {
 
 		svcXlbChain := serviceLBChainName(svcNameString, protocol)
 		if svcInfo.onlyNodeLocalEndpoints {
-			// Only for services with the externalTraffic annotation set to OnlyLocal
+			// Only for services request OnlyLocal traffic
 			// create the per-service LB chain, retaining counters if possible.
 			if lbChain, ok := existingNATChains[svcXlbChain]; ok {
 				writeLine(natChains, lbChain)
@@ -1385,7 +1386,7 @@ func (proxier *Proxier) syncProxyRules(reason syncReason) {
 			continue
 		}
 
-		// Now write ingress loadbalancing & DNAT rules only for services that have a localOnly annotation
+		// Now write ingress loadbalancing & DNAT rules only for services that request OnlyLocal traffic.
 		// TODO - This logic may be combinable with the block above that creates the svc balancer chain
 		localEndpoints := make([]*endpointsInfo, 0)
 		localEndpointChains := make([]utiliptables.Chain, 0)
@@ -1494,6 +1495,11 @@ func (proxier *Proxier) syncProxyRules(reason syncReason) {
 		}
 	}
 	proxier.portsMap = replacementPortsMap
+
+	// Update healthz timestamp if it is periodic sync.
+	if proxier.healthzServer != nil && reason == syncReasonForce {
+		proxier.healthzServer.UpdateTimestamp()
+	}
 
 	// Update healthchecks.  The endpoints list might include services that are
 	// not "OnlyLocal", but the services list will not, and the healthChecker

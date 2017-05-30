@@ -16,15 +16,20 @@ go_library(
     ],
     tags = ["automanaged"],
     deps = [
-        "//cmd/kube-proxy/app/options:go_default_library",
         "//pkg/api:go_default_library",
+        "//pkg/apis/componentconfig:go_default_library",
+        "//pkg/apis/componentconfig/v1alpha1:go_default_library",
         "//pkg/client/clientset_generated/internalclientset:go_default_library",
         "//pkg/client/informers/informers_generated/internalversion:go_default_library",
+        "//pkg/kubectl/cmd/util:go_default_library",
+        "//pkg/kubelet/qos:go_default_library",
         "//pkg/proxy:go_default_library",
         "//pkg/proxy/config:go_default_library",
+        "//pkg/proxy/healthcheck:go_default_library",
         "//pkg/proxy/iptables:go_default_library",
         "//pkg/proxy/userspace:go_default_library",
         "//pkg/proxy/winuserspace:go_default_library",
+        "//pkg/util:go_default_library",
         "//pkg/util/configz:go_default_library",
         "//pkg/util/dbus:go_default_library",
         "//pkg/util/exec:go_default_library",
@@ -42,7 +47,9 @@ go_library(
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/types:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/net:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/util/runtime:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/wait:go_default_library",
+        "//vendor/k8s.io/apiserver/pkg/util/feature:go_default_library",
         "//vendor/k8s.io/client-go/kubernetes:go_default_library",
         "//vendor/k8s.io/client-go/kubernetes/typed/core/v1:go_default_library",
         "//vendor/k8s.io/client-go/pkg/api/v1:go_default_library",
@@ -58,7 +65,6 @@ go_test(
     library = ":go_default_library",
     tags = ["automanaged"],
     deps = [
-        "//cmd/kube-proxy/app/options:go_default_library",
         "//pkg/api:go_default_library",
         "//pkg/apis/componentconfig:go_default_library",
         "//pkg/util/iptables:go_default_library",
@@ -76,9 +82,6 @@ filegroup(
 
 filegroup(
     name = "all-srcs",
-    srcs = [
-        ":package-srcs",
-        "//cmd/kube-proxy/app/options:all-srcs",
-    ],
+    srcs = [":package-srcs"],
     tags = ["automanaged"],
 )

@@ -33,18 +33,19 @@ openapi_library(
         "pkg/apis/storage/v1",
         "pkg/apis/storage/v1beta1",
         "pkg/version",
-        "vendor/k8s.io/metrics/pkg/apis/custom_metrics/v1alpha1",
-        "vendor/k8s.io/metrics/pkg/apis/metrics/v1alpha1",
     ],
     tags = ["automanaged"],
     vendor_targets = [
         "k8s.io/apimachinery/pkg/api/resource",
         "k8s.io/apimachinery/pkg/apis/meta/v1",
+        "k8s.io/apimachinery/pkg/apis/meta/v1alpha1",
         "k8s.io/apimachinery/pkg/runtime",
         "k8s.io/apimachinery/pkg/util/intstr",
         "k8s.io/apimachinery/pkg/version",
         "k8s.io/apiserver/pkg/apis/example/v1",
         "k8s.io/client-go/pkg/api/v1",
+        "k8s.io/metrics/pkg/apis/custom_metrics/v1alpha1",
+        "k8s.io/metrics/pkg/apis/metrics/v1alpha1",
     ],
 )
 

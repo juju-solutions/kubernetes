@@ -208,11 +208,14 @@ CPU_CFS_QUOTA=${CPU_CFS_QUOTA:-true}
 ENABLE_HOSTPATH_PROVISIONER=${ENABLE_HOSTPATH_PROVISIONER:-"false"}
 CLAIM_BINDER_SYNC_PERIOD=${CLAIM_BINDER_SYNC_PERIOD:-"15s"} # current k8s default
 ENABLE_CONTROLLER_ATTACH_DETACH=${ENABLE_CONTROLLER_ATTACH_DETACH:-"true"} # current default
+KEEP_TERMINATED_POD_VOLUMES=${KEEP_TERMINATED_POD_VOLUMES:-"true"}
 # This is the default dir and filename where the apiserver will generate a self-signed cert
 # which should be able to be used as the CA to verify itself
 CERT_DIR=${CERT_DIR:-"/var/run/kubernetes"}
 ROOT_CA_FILE=${CERT_DIR}/server-ca.crt
 ROOT_CA_KEY=${CERT_DIR}/server-ca.key
+CLUSTER_SIGNING_CERT_FILE=${CLUSTER_SIGNING_CERT_FILE:-"${ROOT_CA_FILE}"}
+CLUSTER_SIGNING_KEY_FILE=${CLUSTER_SIGNING_KEY_FILE:-"${ROOT_CA_KEY}"}
 
 # name of the cgroup driver, i.e. cgroupfs or systemd
 if [[ ${CONTAINER_RUNTIME} == "docker" ]]; then
@@ -441,8 +444,16 @@ function start_apiserver {
     fi
 
     # Create CA signers
-    kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" server '"server auth"'
-    kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" client '"client auth"'
+    if [[ "${ENABLE_SINGLE_CA_SIGNER:-}" = true ]]; then
+        kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" server '"client auth","server auth"'
+        sudo cp "${CERT_DIR}/server-ca.key" "${CERT_DIR}/client-ca.key"
+        sudo cp "${CERT_DIR}/server-ca.crt" "${CERT_DIR}/client-ca.crt"
+        sudo cp "${CERT_DIR}/server-ca-config.json" "${CERT_DIR}/client-ca-config.json"
+    else
+        kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" server '"server auth"'
+        kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" client '"client auth"'
+    fi
+
     # Create auth proxy client ca
     kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "${CERT_DIR}" request-header '"client auth"'
 
@@ -545,8 +556,8 @@ function start_controller_manager {
       --v=${LOG_LEVEL} \
       --service-account-private-key-file="${SERVICE_ACCOUNT_KEY}" \
       --root-ca-file="${ROOT_CA_FILE}" \
-      --cluster-signing-cert-file="${ROOT_CA_FILE}" \
-      --cluster-signing-key-file="${ROOT_CA_KEY}" \
+      --cluster-signing-cert-file="${CLUSTER_SIGNING_CERT_FILE}" \
+      --cluster-signing-key-file="${CLUSTER_SIGNING_KEY_FILE}" \
       --enable-hostpath-provisioner="${ENABLE_HOSTPATH_PROVISIONER}" \
       ${node_cidr_args} \
       --pvclaimbinder-sync-period="${CLAIM_BINDER_SYNC_PERIOD}" \
@@ -612,7 +623,6 @@ function start_kubelet {
       fi
 
       sudo -E "${GO_OUT}/hyperkube" kubelet ${priv_arg}\
-        --enable-cri="${ENABLE_CRI}" \
         --v=${LOG_LEVEL} \
         --chaos-chance="${CHAOS_CHANCE}" \
         --container-runtime="${CONTAINER_RUNTIME}" \
@@ -629,7 +639,7 @@ function start_kubelet {
         --enable-controller-attach-detach="${ENABLE_CONTROLLER_ATTACH_DETACH}" \
         --cgroups-per-qos=${CGROUPS_PER_QOS} \
         --cgroup-driver=${CGROUP_DRIVER} \
-        --keep-terminated-pod-volumes=true \
+        --keep-terminated-pod-volumes=${KEEP_TERMINATED_POD_VOLUMES} \
         --eviction-hard=${EVICTION_HARD} \
         --eviction-soft=${EVICTION_SOFT} \
         --eviction-pressure-transition-period=${EVICTION_PRESSURE_TRANSITION_PERIOD} \
@@ -677,6 +687,7 @@ function start_kubelet {
         --volume=/var/lib/docker/:/var/lib/docker:ro \
         --volume=/var/lib/kubelet/:/var/lib/kubelet:rw \
         --volume=/dev:/dev \
+        --volume=/run/xtables.lock:/run/xtables.lock:rw \
         ${cred_bind} \
         --net=host \
         --privileged=true \
@@ -689,12 +700,20 @@ function start_kubelet {
 
 function start_kubeproxy {
     PROXY_LOG=${LOG_DIR}/kube-proxy.log
+
+    cat <<EOF > /tmp/kube-proxy.yaml
+apiVersion: componentconfig/v1alpha1
+kind: KubeProxyConfiguration
+clientConnection:
+  kubeconfig: ${CERT_DIR}/kube-proxy.kubeconfig
+hostnameOverride: ${HOSTNAME_OVERRIDE}
+featureGates: ${FEATURE_GATES}
+EOF
+
     sudo "${GO_OUT}/hyperkube" proxy \
-      --v=${LOG_LEVEL} \
-      --hostname-override="${HOSTNAME_OVERRIDE}" \
-      --feature-gates="${FEATURE_GATES}" \
-      --kubeconfig "$CERT_DIR"/kube-proxy.kubeconfig \
-      --master="https://${API_HOST}:${API_SECURE_PORT}" >"${PROXY_LOG}" 2>&1 &
+      --config=/tmp/kube-proxy.yaml \
+      --master="https://${API_HOST}:${API_SECURE_PORT}" >"${PROXY_LOG}" \
+      --v=${LOG_LEVEL} 2>&1 &
     PROXY_PID=$!
 
     SCHEDULER_LOG=${LOG_DIR}/kube-scheduler.log
@@ -742,11 +761,11 @@ function create_psp_policy {
 
 function create_storage_class {
     if [ -z "$CLOUD_PROVIDER" ]; then
-        # No cloud provider -> no default storage class
-        return
+        CLASS_FILE=${KUBE_ROOT}/cluster/addons/storage-class/local/default.yaml
+    else
+        CLASS_FILE=${KUBE_ROOT}/cluster/addons/storage-class/${CLOUD_PROVIDER}/default.yaml
     fi
 
-    CLASS_FILE=${KUBE_ROOT}/cluster/addons/storage-class/${CLOUD_PROVIDER}/default.yaml
     if [ -e $CLASS_FILE ]; then
         echo "Create default storage class for $CLOUD_PROVIDER"
         ${KUBECTL} --kubeconfig="${CERT_DIR}/admin.kubeconfig" create -f $CLASS_FILE

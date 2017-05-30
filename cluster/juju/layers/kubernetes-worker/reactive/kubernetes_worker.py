@@ -58,6 +58,7 @@ def upgrade_charm():
     hookenv.atexit(remove_state, 'config.changed.install_from_upstream')
 
     cleanup_pre_snap_services()
+    cleanup_configs_with_tls()
     check_resources_for_upgrade_needed()
 
     # Remove gpu.enabled state so we can reconfigure gpu-related kubelet flags,
@@ -71,6 +72,32 @@ def upgrade_charm():
     remove_state('kubernetes-worker.config.created')
     remove_state('kubernetes-worker.ingress.available')
     set_state('kubernetes-worker.restart-needed')
+
+
+@when_not('ingress.migrated')
+def purge_default_ns_ingress():
+    '''Remove the ingress controller from the default namespace '''
+    # The upgrade-charm event will launch a newer ingress controller that
+    # launches in the kube-system namespace. This will port collide with the
+    # existing nginx controller.
+
+    if not os.path.isfile('/root/.kube/config'):
+        hookenv.log('Missing kubeconfig: will attempt ingress migration later')
+        return
+
+    cmd = ['kubectl', 'get', 'po', '-l', 'name=nginx-ingress-lb']
+    try:
+        raw = check_output(cmd)
+    except CalledProcessError:
+        hookenv.log('Failed to purge the existing ingress controller.')
+        return
+
+    if not raw.startswith(b'No resources'):
+        hookenv.log('Removing default namespace nginx-ingress-controller')
+        cmd = ['kubectl', 'delete', 'rc', 'nginx-ingress-controller']
+        check_call(cmd)
+        cmd = ['kubectl', 'delete', 'rc', 'default-http-backend']
+        set_state('ingress.migrated')
 
 
 def check_resources_for_upgrade_needed():
@@ -88,6 +115,21 @@ def set_upgrade_needed():
     require_manual = config.get('require-manual-upgrade')
     if previous_channel is None or not require_manual:
         set_state('kubernetes-worker.snaps.upgrade-specified')
+
+
+def cleanup_configs_with_tls():
+    '''Rename existing configuration files that used x509 validation for the
+    newer token/basic-auth based configs '''
+    rootpath = '/root/.kube/config'
+    ubuntupath = '/home/ubuntu/.kube/config'
+    systempath = '/root/cdk/kubeconfig'
+
+    if os.path.isfile(rootpath):
+        shutil.move(rootpath, '{}.bak'.format(rootpath))
+    if os.path.isfile(ubuntupath):
+        shutil.move(ubuntupath, '{}.bak'.format(ubuntupath))
+    if os.path.isfile(systempath):
+        shutil.move(systempath, '{}.bak'.format(systempath))
 
 
 def cleanup_pre_snap_services():
@@ -301,10 +343,8 @@ def watch_for_changes(kube_api, kube_control, cni):
 
 
 @when('kubernetes-worker.snaps.installed', 'kube-api-endpoint.available',
-      'tls_client.ca.saved', 'tls_client.client.certificate.saved',
-      'tls_client.client.key.saved', 'tls_client.server.certificate.saved',
-      'tls_client.server.key.saved', 'kube-control.dns.available',
-      'cni.available', 'kubernetes-worker.restart-needed')
+      'tls_client.ca_installed', 'kube-control.dns.available',
+      'cni.available', 'kubernetes-worker.restart-needed', 'worker.auth.saved')
 def start_worker(kube_api, kube_control, cni):
     ''' Start kubelet using the provided API and DNS info.'''
     servers = get_kube_api_servers(kube_api)
@@ -314,6 +354,8 @@ def start_worker(kube_api, kube_control, cni):
     # the correct DNS even though the server isn't ready yet.
 
     dns = kube_control.get_dns()
+    creds = kube_control.get_auth_credentials()
+    client_token = creds['client_token']
     cluster_cidr = cni.get_config()['cidr']
 
     if cluster_cidr is None:
@@ -323,7 +365,9 @@ def start_worker(kube_api, kube_control, cni):
     # set --allow-privileged flag for kubelet
     set_privileged()
 
-    create_config(random.choice(servers))
+    # required during upgrade-charm sequences to depcreate x509 cert auth
+    cleanup_configs_with_tls()
+    create_config(random.choice(servers), client_token)
     configure_worker_services(servers, dns, cluster_cidr)
     set_state('kubernetes-worker.config.created')
     restart_unit_services()
@@ -428,26 +472,24 @@ def arch():
     return architecture
 
 
-def create_config(server):
+def create_config(server, client_token):
     '''Create a kubernetes configuration for the worker unit.'''
     # Get the options from the tls-client layer.
     layer_options = layer.options('tls-client')
     # Get all the paths to the tls information required for kubeconfig.
     ca = layer_options.get('ca_certificate_path')
-    key = layer_options.get('client_key_path')
-    cert = layer_options.get('client_certificate_path')
 
     # Create kubernetes configuration in the default location for ubuntu.
-    create_kubeconfig('/home/ubuntu/.kube/config', server, ca, key, cert,
-                      user='ubuntu')
+    create_kubeconfig('/home/ubuntu/.kube/config', server, ca,
+                      token=client_token, user='ubuntu')
     # Make the config dir readable by the ubuntu users so juju scp works.
     cmd = ['chown', '-R', 'ubuntu:ubuntu', '/home/ubuntu/.kube']
     check_call(cmd)
     # Create kubernetes configuration in the default location for root.
-    create_kubeconfig('/root/.kube/config', server, ca, key, cert,
+    create_kubeconfig('/root/.kube/config', server, ca, token=client_token,
                       user='root')
     # Create kubernetes configuration for kubelet, and kube-proxy services.
-    create_kubeconfig(kubeconfig_path, server, ca, key, cert,
+    create_kubeconfig(kubeconfig_path, server, ca, token=client_token,
                       user='kubelet')
 
 
@@ -461,7 +503,6 @@ def configure_worker_services(api_servers, dns, cluster_cidr):
 
     kubelet_opts = FlagManager('kubelet')
     kubelet_opts.add('require-kubeconfig', 'true')
-    kubelet_opts.add('kubeconfig', kubeconfig_path)
     kubelet_opts.add('network-plugin', 'cni')
     kubelet_opts.add('logtostderr', 'true')
     kubelet_opts.add('v', '0')
@@ -476,7 +517,6 @@ def configure_worker_services(api_servers, dns, cluster_cidr):
 
     kube_proxy_opts = FlagManager('kube-proxy')
     kube_proxy_opts.add('cluster-cidr', cluster_cidr)
-    kube_proxy_opts.add('kubeconfig', kubeconfig_path)
     kube_proxy_opts.add('logtostderr', 'true')
     kube_proxy_opts.add('v', '0')
     kube_proxy_opts.add('master', random.choice(api_servers), strict=True)
@@ -487,19 +527,37 @@ def configure_worker_services(api_servers, dns, cluster_cidr):
     check_call(cmd)
 
 
-def create_kubeconfig(kubeconfig, server, ca, key, certificate, user='ubuntu',
-                      context='juju-context', cluster='juju-cluster'):
+def create_kubeconfig(kubeconfig, server, ca, key=None, certificate=None,
+                      user='ubuntu', context='juju-context',
+                      cluster='juju-cluster', password=None, token=None):
     '''Create a configuration for Kubernetes based on path using the supplied
     arguments for values of the Kubernetes server, CA, key, certificate, user
     context and cluster.'''
+    if not key and not certificate and not password and not token:
+        raise ValueError('Missing authentication mechanism.')
+
+    # token and password are mutually exclusive. Error early if both are
+    # present. The developer has requested an impossible situation.
+    # see: kubectl config set-credentials --help
+    if token and password:
+        raise ValueError('Token and Password are mutually exclusive.')
     # Create the config file with the address of the master server.
     cmd = 'kubectl config --kubeconfig={0} set-cluster {1} ' \
           '--server={2} --certificate-authority={3} --embed-certs=true'
     check_call(split(cmd.format(kubeconfig, cluster, server, ca)))
     # Create the credentials using the client flags.
-    cmd = 'kubectl config --kubeconfig={0} set-credentials {1} ' \
-          '--client-key={2} --client-certificate={3} --embed-certs=true'
-    check_call(split(cmd.format(kubeconfig, user, key, certificate)))
+    cmd = 'kubectl config --kubeconfig={0} ' \
+          'set-credentials {1} '.format(kubeconfig, user)
+
+    if key and certificate:
+        cmd = '{0} --client-key={1} --client-certificate={2} '\
+              '--embed-certs=true'.format(cmd, key, certificate)
+    if password:
+        cmd = "{0} --username={1} --password={1}".format(cmd, user, password)
+    # This is mutually exclusive from password. They will not work together.
+    if token:
+        cmd = "{0} --token={1}".format(cmd, token)
+    check_call(split(cmd))
     # Create a default context with the cluster.
     cmd = 'kubectl config --kubeconfig={0} set-context {1} ' \
           '--cluster={2} --user={3}'
@@ -759,6 +817,44 @@ def notify_master_gpu_not_enabled(kube_control):
 
     """
     kube_control.set_gpu(False)
+
+
+@when('kube-control.connected')
+def request_kubelet_and_proxy_credentials(kube_control):
+    """ Request kubelet node authorization with a well formed kubelet user.
+    This also implies that we are requesting kube-proxy auth. """
+
+    nodeuser = 'system:node:{}'.format(gethostname())
+    kube_control.set_auth_request(nodeuser)
+
+
+@when('kube-control.auth.available', 'kube-api-endpoint.available',
+      'tls_client.ca_installed')
+@when_not('worker.auth.saved')
+def render_service_auth_templates(kube_control, kube_api):
+    """Render the authentication templates for kubelet and kube-proxy.
+
+    """
+    creds = kube_control.get_auth_credentials()
+    server = random.choice(get_kube_api_servers(kube_api))
+    nodeuser = 'system:node:{}'.format(gethostname())
+
+    create_kubeconfig('/root/cdk/kubeletconfig', server, ca='/root/cdk/ca.crt',
+                      user=nodeuser, token=creds['kubelet_token'])
+    create_kubeconfig('/root/cdk/kubeproxyconfig', server, user='kube-proxy',
+                      ca='/root/cdk/ca.crt', token=creds['proxy_token'])
+
+    proxy_opts = FlagManager('kube-proxy')
+    kubelet_opts = FlagManager('kubelet')
+
+    proxy_opts.destroy('kubeconfig')
+    proxy_opts.add('kubeconfig', '/root/cdk/kubeproxyconfig')
+
+    kubelet_opts.destroy('kubeconfig')
+    kubelet_opts.add('kubeconfig', '/root/cdk/kubeletconfig')
+
+    set_state('kubernetes-worker.restart-needed')
+    set_state('worker.auth.saved')
 
 
 @when_not('kube-control.connected')
