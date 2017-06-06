@@ -15,13 +15,14 @@
 # limitations under the License.
 
 import base64
+import json
 import os
 import re
 import random
 import shutil
 import socket
 import string
-import json
+import tempfile
 
 import charms.leadership
 
@@ -563,8 +564,8 @@ def addons_ready():
         return False
 
 
-@when('loadbalancer.available', 'certificates.ca.available')
-def loadbalancer_kubeconfig(loadbalancer, ca):
+@when('loadbalancer.available', 'tls_client.ca.saved')
+def loadbalancer_kubeconfig(loadbalancer):
     # Get the potential list of loadbalancers from the relation object.
     hosts = loadbalancer.get_addresses_ports()
     # Get the public address of loadbalancers so users can access the cluster.
@@ -575,9 +576,9 @@ def loadbalancer_kubeconfig(loadbalancer, ca):
     build_kubeconfig(server)
 
 
-@when('certificates.ca.available')
+@when('tls_client.ca.saved')
 @when_not('loadbalancer.available')
-def create_self_config(ca):
+def create_self_config():
     '''Create a kubernetes configuration for the master unit.'''
     server = 'https://{0}:{1}'.format(hookenv.unit_get('public-address'), 6443)
     build_kubeconfig(server)
@@ -795,8 +796,12 @@ def build_kubeconfig(server):
             client_token = get_token('cluster-admin')
         # Create the kubeconfig on this system so users can access the cluster.
         if os.path.exists(kubeconfig_path):
-            os.remove(kubeconfig_path)
-        create_kubeconfig(kubeconfig_path, server, ca, token=client_token)
+           with tempfile.NamedTemporaryFile() as temp:
+               create_kubeconfig(temp.name, server, ca,
+                                 token=client_token)
+               shutil.copy(temp.name, kubeconfig_path)
+        else:
+            create_kubeconfig(kubeconfig_path, server, ca, token=client_token)
         # Make the config file readable by the ubuntu users so juju scp works.
         cmd = ['chown', 'ubuntu:ubuntu', kubeconfig_path]
         check_call(cmd)
@@ -826,7 +831,7 @@ def create_kubeconfig(kubeconfig, server, ca, key=None, certificate=None,
 
     if key and certificate:
         cmd = '{0} --client-key={1} --client-certificate={2} '\
-              '--embed-certs=true'.format(cmd, key, certificate)
+              ''.format(cmd, key, certificate)
     if password:
         cmd = "{0} --username={1} --password={1}".format(cmd, user, password)
     # This is mutually exclusive from password. They will not work together.
