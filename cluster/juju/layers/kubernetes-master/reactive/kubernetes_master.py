@@ -787,9 +787,7 @@ def build_kubeconfig(server):
     cert_exists = cert and os.path.isfile(cert)
     # Do we have everything we need?
     if ca_exists and key_exists and cert_exists:
-        # Cache last server string to know if we need to regenerate the config.
-        if not data_changed('kubeconfig.server', server):
-            return
+        context = hookenv.config('cluster-context')
         # Create an absolute path for the kubeconfig file.
         kubeconfig_path = os.path.join(os.sep, 'home', 'ubuntu', 'config')
         client_token = get_token('cluster-admin')
@@ -797,8 +795,12 @@ def build_kubeconfig(server):
             setup_tokens(None, 'cluster-admin', 'cluster-admin',
                          "system:masters")
             client_token = get_token('cluster-admin')
+        context_name = hookenv.config('cluster-context')
+        if context == "":
+            context_name = os.environ['JUJU_MODEL_NAME']
         # Create the kubeconfig on this system so users can access the cluster.
-        create_kubeconfig(kubeconfig_path, server, ca, token=client_token)
+        create_kubeconfig(kubeconfig_path, server, ca, token=client_token,
+                          cluster=context_name, context=context_name)
         # Make the config file readable by the ubuntu users so juju scp works.
         cmd = ['chown', 'ubuntu:ubuntu', kubeconfig_path]
         check_call(cmd)

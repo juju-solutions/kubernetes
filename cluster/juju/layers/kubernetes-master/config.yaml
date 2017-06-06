@@ -30,3 +30,8 @@ options:
     type: string
     default: "RBAC"
     description: kube-apiserver --authorization-mode <value>
+  cluster-context:
+    type: string
+    default: ""
+    description: |
+      Clusters context stored on the kubecofig file. Defaults to model's name.
