@@ -91,14 +91,20 @@ def purge_default_ns_ingress():
         return
 
     if not raw.startswith(b'No resources'):
-        hookenv.log('Removing default namespace nginx-ingress-controller')
-        niccmd = ['kubectl', '--kubeconfig', kubeconfig_path, 'delete',
-                  'rc', 'nginx-ingress-controller']
-        check_call(niccmd)
-        dhbcmd = ['kubectl', '--kubeconfig', kubeconfig_path, 'delete',
-                  'rc', 'default-http-backend']
-        check_call(dhbcmd)
-        set_state('ingress.migrated')
+        try:
+            hookenv.log('Removing default namespace nginx-ingress-controller')
+            niccmd = ['kubectl', '--kubeconfig', kubeconfig_path, 'delete',
+                      'rc', 'nginx-ingress-controller']
+            check_call(niccmd)
+            dhbcmd = ['kubectl', '--kubeconfig', kubeconfig_path, 'delete',
+                      'rc', 'default-http-backend']
+            check_call(dhbcmd)
+            set_state('ingress.migrated')
+        except CalledProcessError:
+            cleanupdm = 'juju run --application kubernetes-worker ' \
+                    ' charms.reactive set_state ingress.migrated'
+            hookenv.log('Error invoking default ingress removal.')
+            hookenv.log('Stop this log spam with {}'.format(cleanupdm))
 
 
 def check_resources_for_upgrade_needed():
