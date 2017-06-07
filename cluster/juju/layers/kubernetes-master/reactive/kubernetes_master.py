@@ -15,13 +15,14 @@
 # limitations under the License.
 
 import base64
+import json
 import os
 import re
 import random
 import shutil
 import socket
 import string
-import json
+import tempfile
 
 import charms.leadership
 
@@ -145,7 +146,6 @@ def migrate_from_pre_snaps():
 def migrate_rbac_changes():
     '''Probe the state of the system and take action on identified component
     changes '''
-    print('banana')
     machine_state = probe_machine_state()
     backup_path = '/root/pre-rbac-migration-backup'
     # Create a backup plan.
@@ -158,6 +158,11 @@ def migrate_rbac_changes():
         if not os.path.exists(backup_file):
             hookenv.log('Creating single backup of existing args for api')
             shutil.copy(api_args_path, backup_file)
+
+        client_config_backup = os.path.join(backup_path, 'config')
+        if not os.path.exists(client_config_backup):
+            hookenv.log('Creating single backup of existing client config')
+            shutil.copy('/home/ubuntu/config', client_config_backup)
 
         with open(api_args_path, 'r') as fp:
             arg_lines = fp.readlines()
@@ -559,9 +564,8 @@ def addons_ready():
         return False
 
 
-@when('loadbalancer.available', 'certificates.ca.available',
-      'certificates.client.cert.available')
-def loadbalancer_kubeconfig(loadbalancer, ca, client):
+@when('loadbalancer.available', 'tls_client.ca.saved')
+def loadbalancer_kubeconfig(loadbalancer):
     # Get the potential list of loadbalancers from the relation object.
     hosts = loadbalancer.get_addresses_ports()
     # Get the public address of loadbalancers so users can access the cluster.
@@ -572,9 +576,9 @@ def loadbalancer_kubeconfig(loadbalancer, ca, client):
     build_kubeconfig(server)
 
 
-@when('certificates.ca.available', 'certificates.client.cert.available')
+@when('tls_client.ca.saved')
 @when_not('loadbalancer.available')
-def create_self_config(ca, client):
+def create_self_config():
     '''Create a kubernetes configuration for the master unit.'''
     server = 'https://{0}:{1}'.format(hookenv.unit_get('public-address'), 6443)
     build_kubeconfig(server)
@@ -781,15 +785,8 @@ def build_kubeconfig(server):
     # Get all the paths to the tls information required for kubeconfig.
     ca = layer_options.get('ca_certificate_path')
     ca_exists = ca and os.path.isfile(ca)
-    key = layer_options.get('client_key_path')
-    key_exists = key and os.path.isfile(key)
-    cert = layer_options.get('client_certificate_path')
-    cert_exists = cert and os.path.isfile(cert)
     # Do we have everything we need?
-    if ca_exists and key_exists and cert_exists:
-        # Cache last server string to know if we need to regenerate the config.
-        if not data_changed('kubeconfig.server', server):
-            return
+    if ca_exists:
         # Create an absolute path for the kubeconfig file.
         kubeconfig_path = os.path.join(os.sep, 'home', 'ubuntu', 'config')
         client_token = get_token('cluster-admin')
@@ -798,7 +795,13 @@ def build_kubeconfig(server):
                          "system:masters")
             client_token = get_token('cluster-admin')
         # Create the kubeconfig on this system so users can access the cluster.
-        create_kubeconfig(kubeconfig_path, server, ca, token=client_token)
+        if os.path.exists(kubeconfig_path):
+           with tempfile.NamedTemporaryFile() as temp:
+               create_kubeconfig(temp.name, server, ca,
+                                 token=client_token)
+               shutil.copy(temp.name, kubeconfig_path)
+        else:
+            create_kubeconfig(kubeconfig_path, server, ca, token=client_token)
         # Make the config file readable by the ubuntu users so juju scp works.
         cmd = ['chown', 'ubuntu:ubuntu', kubeconfig_path]
         check_call(cmd)
@@ -828,7 +831,7 @@ def create_kubeconfig(kubeconfig, server, ca, key=None, certificate=None,
 
     if key and certificate:
         cmd = '{0} --client-key={1} --client-certificate={2} '\
-              '--embed-certs=true'.format(cmd, key, certificate)
+              ''.format(cmd, key, certificate)
     if password:
         cmd = "{0} --username={1} --password={1}".format(cmd, user, password)
     # This is mutually exclusive from password. They will not work together.
