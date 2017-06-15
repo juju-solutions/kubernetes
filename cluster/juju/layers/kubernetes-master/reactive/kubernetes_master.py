@@ -687,7 +687,7 @@ def build_kubeconfig(server):
     ca_exists = ca and os.path.isfile(ca)
     key = layer_options.get('client_key_path')
     cert = layer_options.get('client_certificate_path')
-    auth_token = get_password('basic_auth.csv')
+    auth_token = get_password('basic_auth.csv', 'admin')
     # Do we have everything we need?
     if ca_exists and auth_token:
         # Create an absolute path for the kubeconfig file.

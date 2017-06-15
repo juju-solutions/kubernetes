@@ -306,7 +306,7 @@ def watch_for_changes(kube_api, kube_control, cni):
       'tls_client.server.key.saved',
       'kube-control.dns.available', 'kube-control.auth.available',
       'cni.available', 'kubernetes-worker.restart-needed')
-def start_worker(kube_api, kube_control, cni):
+def start_worker(kube_api, kube_control, auth_control, cni):
     ''' Start kubelet using the provided API and DNS info.'''
     servers = get_kube_api_servers(kube_api)
     # Note that the DNS server doesn't necessarily exist at this point. We know
