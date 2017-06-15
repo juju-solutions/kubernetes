@@ -441,13 +441,13 @@ def create_config(server, creds):
     cert = layer_options.get('client_certificate_path')
 
     # Create kubernetes configuration in the default location for ubuntu.
-    create_kubeconfig('/home/ubuntu/.kube/config', server, ca, token = creds['client_token'],
+    create_kubeconfig('/home/ubuntu/.kube/config', server, ca, token=creds['client_token'],
                       user='ubuntu')
     # Make the config dir readable by the ubuntu users so juju scp works.
     cmd = ['chown', '-R', 'ubuntu:ubuntu', '/home/ubuntu/.kube']
     check_call(cmd)
     # Create kubernetes configuration in the default location for root.
-    create_kubeconfig('/root/.kube/config', server, ca, token = creds['client_token'],
+    create_kubeconfig('/root/.kube/config', server, ca, token=creds['client_token'],
                       user='root')
     # Create kubernetes configuration for kubelet, and kube-proxy services.
     create_kubeconfig(kubeconfig_path, server, ca, token=creds['kubelet_token'],

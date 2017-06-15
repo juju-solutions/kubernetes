@@ -353,7 +353,7 @@ def send_cluster_dns_detail(kube_control):
 
 
 @when('kube-control.auth.requested')
-@when('autentication.setup')
+@when('authentication.setup')
 @when('leadership.is_leader')
 def send_tokens(kube_control):
     """Send the tokens to the workers."""
