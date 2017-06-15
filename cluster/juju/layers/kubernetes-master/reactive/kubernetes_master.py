@@ -352,6 +352,19 @@ def send_cluster_dns_detail(kube_control):
     kube_control.set_dns(53, hookenv.config('dns_domain'), dns_ip)
 
 
+@when('kube-control.auth.requested')
+@when('autentication.setup')
+@when('leadership.is_leader')
+def send_tokens(kube_control):
+    """Send the tokens to the workers."""
+    kubelet_token = get_token('kubelet')
+    proxy_token = get_token('kube_proxy')
+    admin_token = get_token('admin')
+
+    # Send the data
+    kube_control.sign_auth_request(kubelet_token, proxy_token, admin_token)
+
+
 @when_not('kube-control.connected')
 def missing_kube_control():
     """Inform the operator they need to add the kube-control relation.
@@ -450,7 +463,7 @@ def addons_ready():
 
 
 @when('loadbalancer.available', 'certificates.ca.available',
-      'certificates.client.cert.available')
+      'certificates.client.cert.available', 'authentication.setup')
 def loadbalancer_kubeconfig(loadbalancer, ca, client):
     # Get the potential list of loadbalancers from the relation object.
     hosts = loadbalancer.get_addresses_ports()
@@ -462,7 +475,8 @@ def loadbalancer_kubeconfig(loadbalancer, ca, client):
     build_kubeconfig(server)
 
 
-@when('certificates.ca.available', 'certificates.client.cert.available')
+@when('certificates.ca.available', 'certificates.client.cert.available',
+      'authentication.setup')
 @when_not('loadbalancer.available')
 def create_self_config(ca, client):
     '''Create a kubernetes configuration for the master unit.'''
@@ -672,36 +686,51 @@ def build_kubeconfig(server):
     ca = layer_options.get('ca_certificate_path')
     ca_exists = ca and os.path.isfile(ca)
     key = layer_options.get('client_key_path')
-    key_exists = key and os.path.isfile(key)
     cert = layer_options.get('client_certificate_path')
-    cert_exists = cert and os.path.isfile(cert)
+    auth_token = get_password('basic_auth.csv')
     # Do we have everything we need?
-    if ca_exists and key_exists and cert_exists:
-        # Cache last server string to know if we need to regenerate the config.
-        if not data_changed('kubeconfig.server', server):
-            return
+    if ca_exists and auth_token:
         # Create an absolute path for the kubeconfig file.
         kubeconfig_path = os.path.join(os.sep, 'home', 'ubuntu', 'config')
         # Create the kubeconfig on this system so users can access the cluster.
-        create_kubeconfig(kubeconfig_path, server, ca, key, cert)
+
+        create_kubeconfig(kubeconfig_path, server, ca, token=auth_token)
         # Make the config file readable by the ubuntu users so juju scp works.
         cmd = ['chown', 'ubuntu:ubuntu', kubeconfig_path]
         check_call(cmd)
 
 
-def create_kubeconfig(kubeconfig, server, ca, key, certificate, user='ubuntu',
-                      context='juju-context', cluster='juju-cluster'):
+def create_kubeconfig(kubeconfig, server, ca, key=None, certificate=None,
+                      user='ubuntu', context='juju-context',
+                      cluster='juju-cluster', password=None, token=None):
     '''Create a configuration for Kubernetes based on path using the supplied
     arguments for values of the Kubernetes server, CA, key, certificate, user
     context and cluster.'''
+    if not key and not certificate and not password and not token:
+        raise ValueError('Missing authentication mechanism.')
+
+    # token and password are mutually exclusive. Error early if both are
+    # present. The developer has requested an impossible situation.
+    # see: kubectl config set-credentials --help
+    if token and password:
+        raise ValueError('Token and Password are mutually exclusive.')
     # Create the config file with the address of the master server.
     cmd = 'kubectl config --kubeconfig={0} set-cluster {1} ' \
           '--server={2} --certificate-authority={3} --embed-certs=true'
     check_call(split(cmd.format(kubeconfig, cluster, server, ca)))
     # Create the credentials using the client flags.
-    cmd = 'kubectl config --kubeconfig={0} set-credentials {1} ' \
-          '--client-key={2} --client-certificate={3} --embed-certs=true'
-    check_call(split(cmd.format(kubeconfig, user, key, certificate)))
+    cmd = 'kubectl config --kubeconfig={0} ' \
+          'set-credentials {1} '.format(kubeconfig, user)
+
+    if key and certificate:
+        cmd = '{0} --client-key={1} --client-certificate={2} '\
+              '--embed-certs=true'.format(cmd, key, certificate)
+    if password:
+        cmd = "{0} --username={1} --password={1}".format(cmd, user, password)
+    # This is mutually exclusive from password. They will not work together.
+    if token:
+        cmd = "{0} --token={1}".format(cmd, token)
+    check_call(split(cmd))
     # Create a default context with the cluster.
     cmd = 'kubectl config --kubeconfig={0} set-context {1} ' \
           '--cluster={2} --user={3}'
@@ -788,7 +817,6 @@ def configure_master_services():
     api_opts.add('service-cluster-ip-range', service_cidr())
     api_opts.add('min-request-timeout', '300')
     api_opts.add('v', '4')
-    api_opts.add('client-ca-file', ca_cert_path)
     api_opts.add('tls-cert-file', server_cert_path)
     api_opts.add('tls-private-key-file', server_key_path)
     api_opts.add('kubelet-certificate-authority', ca_cert_path)
@@ -854,6 +882,25 @@ def setup_tokens(token, username, user):
         token = ''.join(random.SystemRandom().choice(alpha) for _ in range(32))
     with open(known_tokens, 'a') as stream:
         stream.write('{0},{1},{2}\n'.format(token, username, user))
+
+
+def get_password(csv_fname, user):
+    '''Get the password of user within the csv file provided.'''
+    root_cdk = '/root/cdk'
+    if not os.path.isdir(root_cdk):
+        return None
+    tokens_fname = os.path.join(root_cdk, csv_fname)
+    with open(tokens_fname, 'r') as stream:
+        for line in stream:
+            record = line.split(',')
+            if record[1] == user:
+                return record[0]
+    return None
+
+
+def get_token(username):
+    """Grab a token from the static file if present. """
+    return get_password('known_tokens.csv', username)
 
 
 @retry(times=3, delay_secs=10)
