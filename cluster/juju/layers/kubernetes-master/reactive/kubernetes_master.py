@@ -364,6 +364,7 @@ def setup_leader_authentication():
 
 
 @when_not('leadership.is_leader')
+@when_not('authentication.setup')
 def setup_non_leader_authentication():
 
     service_key = '/root/cdk/serviceaccount.key'
