@@ -42,10 +42,11 @@ operator.
 
 #### Snap Refresh
 
-Resources used by the kubernetes-master charm are snap packages. By default,
-the `snapd` daemon will query the Snap Store four (4) times per day to process
-updates for installed snaps. A charm configuration option is provided for
-operators to control this refresh frequency.
+The kubernetes resources used by this charm are snap packages. When not
+specified during deployment, these resources come from the public store. By
+default, the `snapd` daemon will refresh all snaps installed from the store
+four (4) times per day. A charm configuration option is provided for operators
+to control this refresh frequency.
 
 >NOTE: this is a global configuration option and will affect the refresh
 time for all snaps installed on a system.
