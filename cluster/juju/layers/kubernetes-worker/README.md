@@ -89,7 +89,7 @@ service is not reachable.
 Note: When debugging connection issues with NodePort services, its important
 to first check the kube-proxy service on the worker units. If kube-proxy is not
 running, the associated port-mapping will not be configured in the iptables
-rulechains. 
+rulechains.
 
 If you need to close the NodePort once a workload has been terminated, you can
 follow the same steps inversely.
@@ -97,4 +97,3 @@ follow the same steps inversely.
 ```
 juju run --application kubernetes-worker close-port 30510
 ```
-
