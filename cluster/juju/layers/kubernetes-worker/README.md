@@ -27,6 +27,37 @@ To add additional compute capacity to your Kubernetes workers, you may
 join any related kubernetes-master, and enlist themselves as ready once the
 deployment is complete.
 
+## Snap Configuration
+
+The kubernetes resources used by this charm are snap packages. By default,
+the `snapd` daemon will query the Snap Store four (4) times per day to process
+updates for installed snaps. A charm configuration option is provided for
+operators to control this refresh frequency.
+
+>NOTE: this is a global configuration option and will affect the refresh
+time for all snaps installed on a system.
+
+Examples:
+
+```sh
+## refresh kubernetes-worker snaps every tuesday
+juju config kubernetes-worker snapd_refresh="tue"
+
+## refresh snaps at 11pm on the last (5th) friday of the month
+juju config kubernetes-worker snapd_refresh="fri5,23:00"
+
+## delay the refresh as long as possible
+juju config kubernetes-worker snapd_refresh="max"
+
+## use the system default refresh timer
+juju config kubernetes-worker snapd_refresh=""
+```
+
+For more information on the possible values for `snapd_refresh`, see the
+*refresh.timer* section in the [system options][] documentation.
+
+[system options]: https://forum.snapcraft.io/t/system-options/87
+
 ## Operational actions
 
 The kubernetes-worker charm supports the following Operational Actions:

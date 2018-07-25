@@ -40,6 +40,37 @@ firewall rules may not be able to contact the Charm Store. In these network
 restricted  environments the resource can be uploaded to the model by the Juju
 operator.
 
+#### Snap Refresh
+
+Resources used by the kubernetes-master charm are snap packages. By default,
+the `snapd` daemon will query the Snap Store four (4) times per day to process
+updates for installed snaps. A charm configuration option is provided for
+operators to control this refresh frequency.
+
+>NOTE: this is a global configuration option and will affect the refresh
+time for all snaps installed on a system.
+
+Examples:
+
+```sh
+## refresh kubernetes-master snaps every tuesday
+juju config kubernetes-master snapd_refresh="tue"
+
+## refresh snaps at 11pm on the last (5th) friday of the month
+juju config kubernetes-master snapd_refresh="fri5,23:00"
+
+## delay the refresh as long as possible
+juju config kubernetes-master snapd_refresh="max"
+
+## use the system default refresh timer
+juju config kubernetes-master snapd_refresh=""
+```
+
+For more information on the possible values for `snapd_refresh`, see the
+*refresh.timer* section in the [system options][] documentation.
+
+[system options]: https://forum.snapcraft.io/t/system-options/87
+
 # Configuration
 
 This charm supports some configuration options to set up a Kubernetes cluster
