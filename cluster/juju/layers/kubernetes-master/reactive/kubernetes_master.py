@@ -69,6 +69,8 @@ from charms.layer.kubernetes_common import cloud_config_path
 from charms.layer.kubernetes_common import write_gcp_snap_config
 from charms.layer.kubernetes_common import write_openstack_snap_config
 from charms.layer.kubernetes_common import write_azure_snap_config
+from charms.layer.kubernetes_common import configure_kube_proxy
+from charms.layer.kubernetes_common import kubeproxyconfig_path
 
 # Override the default nagios shortname regex to allow periods, which we
 # need because our bin names contain them (e.g. 'snap.foo.daemon'). The
@@ -76,7 +78,7 @@ from charms.layer.kubernetes_common import write_azure_snap_config
 nrpe.Check.shortname_re = '[\.A-Za-z0-9-_]+$'
 
 snap_resources = ['kubectl', 'kube-apiserver', 'kube-controller-manager',
-                  'kube-scheduler', 'cdk-addons']
+                  'kube-scheduler', 'cdk-addons', 'kube-proxy']
 
 os.environ['PATH'] += os.pathsep + os.path.join(os.sep, 'snap', 'bin')
 db = unitdata.kv()
@@ -254,6 +256,8 @@ def install_snaps():
     snap.install('kube-scheduler', channel=channel)
     hookenv.status_set('maintenance', 'Installing cdk-addons snap')
     snap.install('cdk-addons', channel=channel)
+    hookenv.status_set('maintenance', 'Installing kube-proxy snap')
+    snap.install('kube-proxy', channel=channel, classic=True)
     calculate_and_store_resource_checksums(checksum_prefix, snap_resources)
     db.set('snap.resources.fingerprint.initialised', True)
     set_state('kubernetes-master.snaps.installed')
@@ -519,7 +523,8 @@ def master_services_down():
     Return: list of failing services"""
     services = ['kube-apiserver',
                 'kube-controller-manager',
-                'kube-scheduler']
+                'kube-scheduler',
+                'kube-proxy']
     failing_services = []
     for service in services:
         daemon = 'snap.{}.daemon'.format(service)
@@ -529,16 +534,18 @@ def master_services_down():
 
 
 @when('etcd.available', 'tls_client.server.certificate.saved',
-      'authentication.setup')
-@when('leadership.set.auto_storage_backend')
+      'authentication.setup',
+      'leadership.set.auto_storage_backend',
+      'cni.available')
 @when_not('kubernetes-master.components.started',
           'kubernetes-master.cloud.pending',
           'kubernetes-master.cloud.blocked')
-def start_master(etcd):
+def start_master():
     '''Run the Kubernetes master components.'''
     hookenv.status_set('maintenance',
                        'Configuring the Kubernetes master services.')
     freeze_service_cidr()
+    etcd = endpoint_from_flag('etcd.available')
     if not etcd.get_connection_string():
         # etcd is not returning a connection string. This happens when
         # the master unit disconnects from etcd and is ready to terminate.
@@ -553,6 +560,14 @@ def start_master(etcd):
     configure_apiserver(etcd.get_connection_string())
     configure_controller_manager()
     configure_scheduler()
+
+    # kube-proxy
+    cni = endpoint_from_flag('cni.available')
+    cluster_cidr = cni.get_config()['cidr']
+    configure_kube_proxy(configure_prefix, 
+                         ['127.0.0.1:8080'], cluster_cidr)
+    service_restart('snap.kube-proxy.daemon')
+
     set_state('kubernetes-master.components.started')
     hookenv.open_port(6443)
 
@@ -1037,6 +1052,7 @@ def shutdown():
     service_stop('snap.kube-apiserver.daemon')
     service_stop('snap.kube-controller-manager.daemon')
     service_stop('snap.kube-scheduler.daemon')
+    service_stop('snap.kube-proxy.daemon')
 
 
 def build_kubeconfig(server):
@@ -1064,6 +1080,11 @@ def build_kubeconfig(server):
         # and kubernete-master
         create_kubeconfig(kubeclientconfig_path, server, ca,
                           user='admin', password=client_pass)
+
+        # make a kubeconfig for kube-proxy
+        proxy_token = get_token('system:kube-proxy')
+        create_kubeconfig(kubeproxyconfig_path, server, ca,
+                          token=proxy_token, user='kube-proxy')
 
 
 def get_dns_ip():
