@@ -471,7 +471,7 @@ def configure_kube_proxy(configure_prefix, api_servers, cluster_cidr):
     kube_proxy_opts['master'] = random.choice(api_servers)
     kube_proxy_opts['hostname-override'] = get_node_name()
 
-    if b'lxc' in check_output('virt-what', shell=True):
+    if host.is_container():
         kube_proxy_opts['conntrack-max-per-core'] = '0'
 
     configure_kubernetes_service(configure_prefix, 'kube-proxy',

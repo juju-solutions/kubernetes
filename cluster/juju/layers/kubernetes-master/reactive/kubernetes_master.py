@@ -114,6 +114,14 @@ def freeze_service_cidr():
     db.set('kubernetes-master.service-cidr', service_cidr())
 
 
+def maybe_install_kube_proxy():
+    if not snap.is_installed('kube-proxy'):
+        channel = hookenv.config('channel')
+        hookenv.status_set('maintenance', 'Installing kube-proxy snap')
+        snap.install('kube-proxy', channel=channel, classic=True)
+        calculate_and_store_resource_checksums(checksum_prefix, snap_resources)
+
+
 @hook('upgrade-charm')
 def check_for_upgrade_needed():
     '''An upgrade charm event was triggered by Juju, react to that here.'''
@@ -129,6 +137,7 @@ def check_for_upgrade_needed():
         set_state('kubernetes-master.cloud.request-sent')
 
     migrate_from_pre_snaps()
+    maybe_install_kube_proxy()
     add_rbac_roles()
     set_state('reconfigure.authentication.setup')
     remove_state('authentication.setup')
