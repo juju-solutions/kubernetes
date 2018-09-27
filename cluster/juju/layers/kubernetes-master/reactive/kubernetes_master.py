@@ -577,13 +577,13 @@ def start_master():
     # https://github.com/kubernetes/kubernetes/issues/43461
     handle_etcd_relation(etcd)
 
+    # make all services restart all the time
+    add_systemd_restart_always()
+
     # Add CLI options to all components
     configure_apiserver(etcd.get_connection_string())
     configure_controller_manager()
     configure_scheduler()
-
-    # make all services restart all the time
-    add_systemd_restart_always()
 
     # kube-proxy
     cni = endpoint_from_flag('cni.available')
@@ -960,7 +960,6 @@ def update_nrpe_config(unused=None):
     current_unit = nrpe.get_nagios_unit_name()
     nrpe_setup = nrpe.NRPE(hostname=hostname)
     nrpe.add_init_service_checks(nrpe_setup, services, current_unit)
-    nrpe.add_init_service_checks(nrpe_setup, master_services, current_unit)
     nrpe_setup.write()
 
 
@@ -1077,7 +1076,7 @@ def shutdown():
 
     """
     for service in master_services:
-        service_stop(service)
+        service_stop('snap.%s.daemon' % service)
 
 
 def build_kubeconfig(server):
