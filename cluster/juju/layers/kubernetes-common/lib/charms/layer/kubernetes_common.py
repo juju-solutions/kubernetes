@@ -519,7 +519,6 @@ def manage_registry_certs(subdir, remove=False):
     :param: bool remove: True to remove cert data; False to add it
     '''
     cert_dir = '/etc/docker/certs.d/{}'.format(subdir)
-    os.makedirs(cert_dir, exist_ok=True)
 
     if remove:
         if os.path.isdir(cert_dir):
@@ -530,6 +529,7 @@ def manage_registry_certs(subdir, remove=False):
         client_cert_path = tls_options.get('client_certificate_path')
         client_key_path = tls_options.get('client_key_path')
 
+        os.makedirs(cert_dir, exist_ok=True)
         client_tls = {
             client_cert_path: '{}/client.cert'.format(cert_dir),
             client_key_path: '{}/client.key'.format(cert_dir),

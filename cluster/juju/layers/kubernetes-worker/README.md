@@ -91,7 +91,9 @@ juju relate kubernetes-worker:docker-registry docker-registry:docker-registry
 
 Configure kubernetes-worker to use images pushed to the `docker-registry` charm:
 
-    juju config kubernetes-worker default-backend-image=YOUR_REGISTRY/defaultbackend-amd64:1.5
+```bash
+juju config kubernetes-worker default-backend-image=YOUR_REGISTRY/defaultbackend-amd64:1.5
+```
 
 Learn more about the `docker-registry` capabilities at [docker-registry][].
 

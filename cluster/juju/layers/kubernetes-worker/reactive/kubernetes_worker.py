@@ -586,6 +586,7 @@ def config_changed_requires_restart():
 @when('config.changed.docker-logins')
 def docker_logins_changed():
     """Set a flag to handle new docker login options.
+
     If docker daemon options have also changed, set a flag to ensure the
     daemon is restarted prior to running docker login.
     """
