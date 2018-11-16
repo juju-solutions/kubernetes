@@ -1327,6 +1327,7 @@ def add_docker_client_certs(cert_dir):
 @when('endpoint.docker-registry.ready')
 @when_not('kubernetes-worker.registry.configured')
 def configure_registry():
+    '''Add docker registry config when present.'''
     registry = endpoint_from_flag('endpoint.docker-registry.ready')
     config = hookenv.config()
     netloc = registry.registry_netloc
@@ -1368,9 +1369,17 @@ def configure_registry():
     set_state('kubernetes-worker.registry.configured')
 
 
+@when('endpoint.docker-registry.changed',
+      'kubernetes-worker.registry.configured')
+def reconfigure_registry():
+    '''Signal to update the registry config when something changes.'''
+    remove_state('kubernetes-worker.registry.configured')
+
+
 @when('kubernetes-worker.registry.configured')
-@when_not('endpoint.docker-registry.ready')
+@when_not('endpoint.docker-registry.joined')
 def remove_registry():
+    '''Remove registry config when the registry is no longer present.'''
     config = hookenv.config()
     netloc = db.get('registry_netloc', None)
 
