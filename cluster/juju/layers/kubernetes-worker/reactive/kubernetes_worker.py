@@ -37,7 +37,7 @@ from charms.reactive import endpoint_from_flag
 from charms.reactive import set_state, remove_state, is_state
 from charms.reactive import when, when_any, when_not, when_none
 
-from charms.reactive.helpers import any_file_changed, data_changed
+from charms.reactive.helpers import data_changed
 from charms.templating.jinja2 import render
 
 from charmhelpers.core import hookenv, unitdata
@@ -62,6 +62,7 @@ from charms.layer.kubernetes_common import write_azure_snap_config
 from charms.layer.kubernetes_common import kubeproxyconfig_path
 from charms.layer.kubernetes_common import configure_kube_proxy
 from charms.layer.kubernetes_common import get_version
+from charms.layer.kubernetes_common import manage_docker_opts, manage_registry_certs
 
 # Override the default nagios shortname regex to allow periods, which we
 # need because our bin names contain them (e.g. 'snap.foo.daemon'). The
@@ -585,11 +586,16 @@ def config_changed_requires_restart():
 @when('config.changed.docker-logins')
 def docker_logins_changed():
     """Set a flag to handle new docker login options.
-
-    Process the configured docker options prior to setting the login flag
-    to ensure the docker daemon is ready to login.
+    If docker daemon options have also changed, set a flag to ensure the
+    daemon is restarted prior to running docker login.
     """
-    process_docker_opts()
+    config = hookenv.config()
+
+    if data_changed('docker-opts', config['docker-opts']):
+        hookenv.log('Found new docker daemon options. Requesting a restart.')
+        # State will be removed by layer-docker after restart
+        set_state('docker.restart')
+
     set_state('kubernetes-worker.docker-login')
 
 
@@ -1275,55 +1281,6 @@ def nfs_storage(mount):
     set_state('nfs.configured')
 
 
-def process_docker_opts(add=None, remove=None):
-    '''Manage docker options and signal a restart if needed.
-
-    Detect changes to the configured docker options and set a flag to restart
-    the daemon if needed. Optionally update the current configuration by
-    setting relevant function params.
-
-    :param: str add: daemon option string to add
-    :param: str remove: daemon option string to remove
-    '''
-    config = hookenv.config()
-    opts = config.get('docker-opts', '')
-    if remove and remove in opts:
-        opts = opts.replace(remove, '').strip()
-    if add and add not in opts:
-        opts = '{} {}'.format(opts, add)
-    if data_changed('docker-opts', opts):
-        hookenv.log('Setting new docker daemon options: {}.'.format(opts))
-        config['docker-opts'] = opts
-        # NB: explicit save in case another reactive method relies on this
-        # config before our current hook exits.
-        config.save()
-        # Flag will be removed by layer-docker after restart
-        set_state('docker.restart')
-
-
-def add_docker_client_certs(cert_dir):
-    '''Add docker client certificates.
-
-    :param: str cert_dir: directory to store the client certs
-    '''
-    layer_options = layer.options('tls-client')
-    client_cert_path = layer_options.get('client_certificate_path')
-    client_key_path = layer_options.get('client_key_path')
-
-    os.makedirs(cert_dir, exist_ok=True)
-    client_tls = {
-        client_cert_path: '{}/client.cert'.format(cert_dir),
-        client_key_path: '{}/client.key'.format(cert_dir),
-    }
-    for f, link in client_tls.items():
-        if os.path.isfile(f) and any_file_changed([f]):
-            try:
-                os.remove(link)
-            except FileNotFoundError:
-                pass
-            os.symlink(f, link)
-
-
 @when('endpoint.docker-registry.ready')
 @when_not('kubernetes-worker.registry.configured')
 def configure_registry():
@@ -1333,18 +1290,17 @@ def configure_registry():
     netloc = registry.registry_netloc
 
     # handle tls data
-    cert_dir = '/etc/docker/certs.d/{}'.format(netloc)
-    insecure_opt = '--insecure-registry={}'.format(netloc)
+    cert_subdir = netloc
+    insecure_opt = {'insecure-registry': netloc}
     if registry.has_tls():
         # Ensure the CA that signed our registry cert is trusted and any
         # insecure docker opts related to this registry are removed.
         install_ca_cert(registry.tls_ca, name='juju-docker-registry')
-        process_docker_opts(remove=insecure_opt)
-        add_docker_client_certs(cert_dir)
+        manage_docker_opts(insecure_opt, remove=True)
+        manage_registry_certs(cert_subdir, remove=False)
     else:
-        process_docker_opts(add=insecure_opt)
-        if os.path.isdir(cert_dir):
-            shutil.rmtree(cert_dir)
+        manage_docker_opts(insecure_opt, remove=False)
+        manage_registry_certs(cert_subdir, remove=True)
 
     # handle auth data
     logins = json.loads(config.get('docker-logins', '[]'))
@@ -1385,11 +1341,10 @@ def remove_registry():
 
     if netloc:
         # remove tls-related data
-        cert_dir = '/etc/docker/certs.d/{}'.format(netloc)
-        insecure_opt = '--insecure-registry={}'.format(netloc)
-        process_docker_opts(remove=insecure_opt)
-        if os.path.isdir(cert_dir):
-            shutil.rmtree(cert_dir)
+        cert_subdir = netloc
+        insecure_opt = {'insecure-registry': netloc}
+        manage_docker_opts(insecure_opt, remove=True)
+        manage_registry_certs(cert_subdir, remove=True)
 
         # remove auth-related data
         logins = json.loads(config.get('docker-logins', '[]'))
