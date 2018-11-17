@@ -1287,16 +1287,15 @@ def nfs_storage(mount):
 def configure_registry():
     '''Add docker registry config when present.'''
     registry = endpoint_from_flag('endpoint.docker-registry.ready')
-    config = hookenv.config()
     netloc = registry.registry_netloc
 
     # handle tls data
     cert_subdir = netloc
     insecure_opt = {'insecure-registry': netloc}
     if registry.has_tls():
-        # Ensure the CA that signed our registry cert is trusted and any
-        # insecure docker opts related to this registry are removed.
+        # ensure the CA that signed our registry cert is trusted
         install_ca_cert(registry.tls_ca, name='juju-docker-registry')
+        # remove potential insecure docker opts related to this registry
         manage_docker_opts(insecure_opt, remove=True)
         manage_registry_certs(cert_subdir, remove=False)
     else:
@@ -1304,22 +1303,15 @@ def configure_registry():
         manage_registry_certs(cert_subdir, remove=True)
 
     # handle auth data
-    logins = json.loads(config.get('docker-logins', '[]'))
     if registry.has_auth_basic():
-        # append registry login info
-        registry_login = {
-            'server': netloc,
-            'username': registry.basic_user,
-            'password': registry.basic_password,
-        }
-        logins.append(registry_login)
+        hookenv.log('Logging into docker registry: {}.'.format(netloc))
+        cmd = ['docker', 'login', netloc,
+               '-u', registry.basic_user, '-p', registry.basic_password]
+        subprocess.check_call(cmd)
     else:
-        # remove any previous registry login
-        logins = [l for l in logins if l.get('server', '') != netloc]
-    if data_changed('registry-logins', logins):
-        hookenv.log('Configuring docker logins for docker-registry.')
-        config['docker-logins'] = json.dumps(logins)
-        set_state('kubernetes-worker.docker-login')
+        hookenv.log('Disabling auth for docker registry: {}.'.format(netloc))
+        # NB: it's safe to logout of a registry that was never logged in
+        subprocess.check_call(['docker', 'logout', netloc])
 
     # NB: store our netloc so we can clean up if the registry goes away
     db.set('registry_netloc', netloc)
@@ -1337,7 +1329,6 @@ def reconfigure_registry():
 @when_not('endpoint.docker-registry.joined')
 def remove_registry():
     '''Remove registry config when the registry is no longer present.'''
-    config = hookenv.config()
     netloc = db.get('registry_netloc', None)
 
     if netloc:
@@ -1348,11 +1339,8 @@ def remove_registry():
         manage_registry_certs(cert_subdir, remove=True)
 
         # remove auth-related data
-        logins = json.loads(config.get('docker-logins', '[]'))
-        logins = [l for l in logins if l.get('server', '') != netloc]
-        if data_changed('registry-logins', logins):
-            hookenv.log('Removing docker login for docker-registry.')
-            config['docker-logins'] = json.dumps(logins)
-            set_state('kubernetes-worker.docker-login')
+        hookenv.log('Disabling auth for docker registry: {}.'.format(netloc))
+        # NB: it's safe to logout of a registry that was never logged in
+        subprocess.check_call(['docker', 'logout', netloc])
 
     remove_state('kubernetes-worker.registry.configured')
