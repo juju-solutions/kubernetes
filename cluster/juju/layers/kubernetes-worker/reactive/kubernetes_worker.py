@@ -1307,11 +1307,24 @@ def configure_registry():
         hookenv.log('Logging into docker registry: {}.'.format(netloc))
         cmd = ['docker', 'login', netloc,
                '-u', registry.basic_user, '-p', registry.basic_password]
-        subprocess.check_call(cmd)
+        try:
+            check_output(cmd, stderr=subprocess.STDOUT)
+        except CalledProcessError as e:
+            if b'http response' in e.output.lower():
+                # non-tls login with basic auth will error like this:
+                #  Error response ... server gave HTTP response to HTTPS client
+                msg = 'docker login requires a TLS-enabled registry'
+            elif b'unauthorized' in e.output.lower():
+                # invalid creds will error like this:
+                #  Error response ... 401 Unauthorized
+                msg = 'Incorrect credentials for docker registry'
+            else:
+                msg = 'docker login failed, see juju debug-log'
+            hookenv.status_set('blocked', msg)
     else:
         hookenv.log('Disabling auth for docker registry: {}.'.format(netloc))
         # NB: it's safe to logout of a registry that was never logged in
-        subprocess.check_call(['docker', 'logout', netloc])
+        check_call(['docker', 'logout', netloc])
 
     # NB: store our netloc so we can clean up if the registry goes away
     db.set('registry_netloc', netloc)
@@ -1341,6 +1354,6 @@ def remove_registry():
         # remove auth-related data
         hookenv.log('Disabling auth for docker registry: {}.'.format(netloc))
         # NB: it's safe to logout of a registry that was never logged in
-        subprocess.check_call(['docker', 'logout', netloc])
+        check_call(['docker', 'logout', netloc])
 
     remove_state('kubernetes-worker.registry.configured')
