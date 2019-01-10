@@ -936,10 +936,12 @@ def addons_ready():
 def loadbalancer_kubeconfig(loadbalancer, ca, client):
     # Get the potential list of loadbalancers from the relation object.
     hosts = loadbalancer.get_addresses_ports()
+    # Use the most recently enrolled loadbalancer.
+    host = hosts[-1]
     # Get the public address of loadbalancers so users can access the cluster.
-    address = hosts[0].get('public-address')
+    address = host.get('public-address')
     # Get the port of the loadbalancer so users can access the cluster.
-    port = hosts[0].get('port')
+    port = host.get('port')
     server = 'https://{0}:{1}'.format(address, port)
     build_kubeconfig(server)
 
