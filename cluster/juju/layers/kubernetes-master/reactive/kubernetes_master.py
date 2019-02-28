@@ -1031,9 +1031,10 @@ def ceph_storage_privilege():
     reconfigure_apiserver(endpoint_from_flag('etcd.available'))
 
 
+@when('ceph-client.connected')
 @when('kubernetes-master.ceph.configured')
 @when_not('kubernetes-master.ceph.pool.created')
-def ceph_storage_pool():
+def ceph_storage_pool(ceph_client):
     '''Once Ceph relation is ready,
     we need to add storage pools.
 
@@ -1041,19 +1042,16 @@ def ceph_storage_pool():
     '''
     hookenv.log('Creating Ceph pools.')
 
-    ReplicatedPool(
-        name='xfs-pool',
-        service='admin',
-        replicas=3,
-        app_name=None,
-    ).create()
+    pools = [
+        'xfs-pool',
+        'ext4-pool'
+    ]
 
-    ReplicatedPool(
-        name='ext4-pool',
-        service='admin',
-        replicas=3,
-        app_name=None,
-    ).create()
+    for pool in pools:
+        ceph_client.create_pool(
+            name=pool,
+            replicas=3
+        )
 
     set_state('kubernetes-master.ceph.pool.created')
 
@@ -1073,36 +1071,6 @@ def ceph_storage():
     # >=1.12 will use CSI.
     if get_version('kube-apiserver') >= (1, 12) and not ceph_admin.key():
         return  # Retry until Ceph gives us a key.
-
-    ceph_context = {
-        'mon_hosts': ceph_admin.mon_hosts(),
-        'fsid': ceph_admin.fsid(),
-        'auth_supported': ceph_admin.auth(),
-        'use_syslog': "true",
-        'ceph_public_network': '',
-        'ceph_cluster_network': '',
-        'loglevel': 1,
-        'hostname': socket.gethostname(),
-    }
-    # Install the ceph common utilities.
-    apt_install(['ceph-common'], fatal=True)
-
-    etc_ceph_directory = '/etc/ceph'
-    if not os.path.isdir(etc_ceph_directory):
-        os.makedirs(etc_ceph_directory)
-    charm_ceph_conf = os.path.join(etc_ceph_directory, 'ceph.conf')
-    # Render the ceph configuration from the ceph conf template
-    render('ceph.conf', charm_ceph_conf, ceph_context)
-
-    # The key can rotate independently of other ceph config, so validate it
-    admin_key = os.path.join(
-        etc_ceph_directory, 'ceph.client.admin.keyring')
-    try:
-        with open(admin_key, 'w') as key_file:
-            key_file.write("[client.admin]\n\tkey = {}\n".format(
-                ceph_admin.key()))
-    except IOError as err:
-        hookenv.log("IOError writing admin.keyring: {}".format(err))
 
     # Enlist the ceph-admin key as a kubernetes secret
     if ceph_admin.key():
