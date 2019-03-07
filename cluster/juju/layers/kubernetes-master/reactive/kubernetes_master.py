@@ -1034,13 +1034,14 @@ def ceph_storage_privilege():
 @when('ceph-client.connected')
 @when('kubernetes-master.ceph.configured')
 @when_not('kubernetes-master.ceph.pool.created')
-def ceph_storage_pool(ceph_client):
+def ceph_storage_pool():
     '''Once Ceph relation is ready,
     we need to add storage pools.
 
     :return: None
     '''
     hookenv.log('Creating Ceph pools.')
+    ceph_client = endpoint_from_flag('ceph-client.connected')
 
     pools = [
         'xfs-pool',
@@ -1048,10 +1049,15 @@ def ceph_storage_pool(ceph_client):
     ]
 
     for pool in pools:
+        hookenv.status_set(
+            'maintenance',
+            'Creating {} pool.'.format(pool)
+        )
         ceph_client.create_pool(
             name=pool,
             replicas=3
         )
+
 
     set_state('kubernetes-master.ceph.pool.created')
 
