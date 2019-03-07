@@ -1053,10 +1053,19 @@ def ceph_storage_pool():
             'maintenance',
             'Creating {} pool.'.format(pool)
         )
-        ceph_client.create_pool(
-            name=pool,
-            replicas=3
-        )
+        try:
+            ceph_client.create_pool(
+                name=pool,
+                replicas=3
+            )
+        except Exception as e:
+            hookenv.status_set(
+                'blocked',
+                'Error creating {} pool: {}.'.format(
+                    pool,
+                    e
+                )
+            )
 
 
     set_state('kubernetes-master.ceph.pool.created')
