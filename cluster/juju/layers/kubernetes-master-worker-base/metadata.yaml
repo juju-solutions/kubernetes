@@ -1,3 +1,7 @@
 requires:
   docker-registry:
     interface: docker-registry
+
+provides:
+  docker:
+    interface: container
