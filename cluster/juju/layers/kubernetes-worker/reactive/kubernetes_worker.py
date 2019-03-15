@@ -80,6 +80,15 @@ os.environ['PATH'] += os.pathsep + os.path.join(os.sep, 'snap', 'bin')
 db = unitdata.kv()
 
 
+@when('endpoint.container-runtime.available')
+def container_runtime_joined():
+    endpoint = endpoint_from_flag('endpoint.container-runtime.available')
+    config = endpoint.get_config()
+
+    if config['nvidia_enabled']:
+        set_state('nvidia-docker.installed')
+
+
 @hook('upgrade-charm')
 def upgrade_charm():
     # migrate to new flags
@@ -242,7 +251,7 @@ def shutdown():
     service_stop('snap.kube-proxy.daemon')
 
 
-@when('docker.available')
+@when('endpoint.container-runtime.available')
 @when_not('kubernetes-worker.cni-plugins.installed')
 def install_cni_plugins():
     ''' Unpack the cni-plugins resource '''
@@ -578,10 +587,10 @@ def docker_logins_changed():
     """
     config = hookenv.config()
 
-    if data_changed('docker-opts', config['docker-opts']):
-        hookenv.log('Found new docker daemon options. Requesting a restart.')
+    #if data_changed('docker-opts', config['docker-opts']):
+    #    hookenv.log('Found new docker daemon options. Requesting a restart.')
         # State will be removed by layer-docker after restart
-        set_state('docker.restart')
+    #    set_state('docker.restart')
 
     set_state('kubernetes-worker.docker-login')
 
@@ -656,6 +665,13 @@ def configure_kubelet(dns, ingress_ip):
     kubelet_opts['v'] = '0'
     kubelet_opts['logtostderr'] = 'true'
     kubelet_opts['node-ip'] = ingress_ip
+
+    endpoint_config = \
+        endpoint_from_flag('endpoint.container-runtime.available').get_config()
+
+    kubelet_opts['container-runtime'] = endpoint_config['runtime']
+    if kubelet_opts['container-runtime'] == 'remote':
+        kubelet_opts['container-runtime-endpoint'] = endpoint_config['socket']
 
     kubelet_cloud_config_path = cloud_config_path('kubelet')
     if is_state('endpoint.aws.ready'):
@@ -1046,7 +1062,7 @@ def missing_kube_control():
                 hookenv.service_name()))
 
 
-@when('docker.ready')
+@when('container.available')
 def fix_iptables_for_docker_1_13():
     """ Fix iptables FORWARD policy for Docker >=1.13
     https://github.com/kubernetes/kubernetes/issues/40182

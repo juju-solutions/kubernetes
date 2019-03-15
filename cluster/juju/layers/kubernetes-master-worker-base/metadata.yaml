@@ -3,5 +3,6 @@ requires:
     interface: docker-registry
 
 provides:
-  docker:
-    interface: container
+  container-runtime:
+    interface: container-runtime
+    scope: container
