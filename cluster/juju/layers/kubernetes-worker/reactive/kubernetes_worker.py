@@ -81,12 +81,15 @@ db = unitdata.kv()
 
 
 @when('endpoint.container-runtime.available')
+@when_not('kubernetes-worker.restart-needed')
 def container_runtime_joined():
     endpoint = endpoint_from_flag('endpoint.container-runtime.available')
     config = endpoint.get_config()
 
     if config['nvidia_enabled']:
         set_state('nvidia-docker.installed')
+
+    set_state('kubernetes-worker.restart-needed')
 
 
 @hook('upgrade-charm')
@@ -461,14 +464,28 @@ def watch_for_changes():
         set_state('kubernetes-worker.restart-needed')
 
 
+@when('kubernetes-worker.cloud.pending',
+          'kubernetes-worker.cloud.blocked')
+@when_not('kubernetes-worker.snaps.installed', 'kube-api-endpoint.available',
+      'tls_client.ca.saved', 'tls_client.certs.saved',
+      'kube-control.dns.available', 'kube-control.auth.available',
+      'cni.available', 'kubernetes-worker.restart-needed',
+      'worker.auth.bootstrapped', 'endpoint.container-runtime.available')
+def no_container_runtime_connected():
+    hookenv.status_set(
+        'waiting',
+        'Connect a container runtime.'
+    )
+
+
 @when('kubernetes-worker.snaps.installed', 'kube-api-endpoint.available',
       'tls_client.ca.saved', 'tls_client.certs.saved',
       'kube-control.dns.available', 'kube-control.auth.available',
       'cni.available', 'kubernetes-worker.restart-needed',
-      'worker.auth.bootstrapped')
+      'worker.auth.bootstrapped', 'endpoint.container-runtime.available')
 @when_not('kubernetes-worker.cloud.pending',
           'kubernetes-worker.cloud.blocked')
-def start_worker(kube_api, kube_control, auth_control, cni):
+def start_worker(kube_api, kube_control, auth_control, cni, runtime):
     ''' Start kubelet using the provided API and DNS info.'''
     servers = get_kube_api_servers(kube_api)
     # Note that the DNS server doesn't necessarily exist at this point. We know
